@@ -16,7 +16,7 @@ pub type MainResult<T> = Result<T, MainError>;
 pub enum MainError {
     Io(io::Error),
     Tag(Cow<'static, str>, Box<MainError>),
-    Other(Box<dyn Error>),
+    Other(Box<dyn Error + Send + Sync + 'static>),
     OtherOwned(String),
     OtherBorrowed(&'static str),
 }
@@ -53,7 +53,7 @@ from_impl! { &'static str => MainError, v -> MainError::OtherBorrowed(v) }
 
 impl<T> From<Box<T>> for MainError
 where
-    T: 'static + Error,
+    T: Error + Send + Sync + 'static,
 {
     fn from(src: Box<T>) -> Self {
         MainError::Other(src)
