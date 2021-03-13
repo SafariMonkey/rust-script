@@ -58,13 +58,15 @@ Regarding the loop templates: what I *want* is for the result of the closure to 
 pub const LOOP_TEMPLATE: &str = r#"
 #{prelude}
 use std::any::Any;
+#[allow(unused_imports)]
 use std::io::prelude::*;
 
 fn main() {
     let mut closure = enforce_closure(
-{#{script}}
+#[allow(unused_braces)] {#{script}}
     );
     let mut line_buffer = String::new();
+    #[allow(unused_mut)]
     let mut stdin = std::io::stdin();
     loop {
         line_buffer.clear();
@@ -73,7 +75,7 @@ fn main() {
         let output = closure(&line_buffer);
 
         let display = {
-            let output_any: &Any = &output;
+            let output_any: &dyn Any = &output;
             !output_any.is::<()>()
         };
 
@@ -92,13 +94,15 @@ where F: FnMut(&str) -> T, T: 'static {
 /// The template used for `--count --loop` input.
 pub const LOOP_COUNT_TEMPLATE: &str = r#"
 use std::any::Any;
+#[allow(unused_imports)]
 use std::io::prelude::*;
 
 fn main() {
     let mut closure = enforce_closure(
-{#{script}}
+#[allow(unused_braces)] {#{script}}
     );
     let mut line_buffer = String::new();
+    #[allow(unused_mut)]
     let mut stdin = std::io::stdin();
     let mut count = 0;
     loop {
@@ -109,7 +113,7 @@ fn main() {
         let output = closure(&line_buffer, count);
 
         let display = {
-            let output_any: &Any = &output;
+            let output_any: &dyn Any = &output;
             !output_any.is::<()>()
         };
 
