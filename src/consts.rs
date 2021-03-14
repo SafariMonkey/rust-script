@@ -17,6 +17,15 @@ pub const SCRIPT_PRELUDE_SUB: &str = "prelude";
 /// The template used for script file inputs.
 pub const FILE_TEMPLATE: &str = r#"#{script}"#;
 
+/// The template used for script file inputs.
+pub const MAIN_TEMPLATE: &str = r#"
+fn main() -> Result<(), Box<dyn std::error::Error+Sync+Send>> {
+    {
+        #{script}
+    }
+    Ok(())
+}"#;
+
 /// The template used for `--expr` input.
 pub const EXPR_TEMPLATE: &str = r#"
 #{prelude}

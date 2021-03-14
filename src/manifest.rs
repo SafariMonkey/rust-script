@@ -59,24 +59,21 @@ pub fn split_input(
             let (manifest, source) =
                 find_embedded_manifest(content).unwrap_or((Manifest::Toml(""), content));
 
-            let source = if source.lines().any(contains_main_method) {
-                source.to_string()
-            } else {
-                format!("fn main() -> Result<(), Box<dyn std::error::Error+Sync+Send>> {{\n    {{\n    {}    }}\n    Ok(())\n}}", source)
-            };
-            (manifest, source, templates::get_template("file")?, false)
+            let has_main = source.lines().any(contains_main_method);
+            let templ = if has_main { "file" } else { "main" };
+            (manifest, source, templates::get_template(templ)?, false)
         }
         Input::Expr(content, template) => {
             template_buf = templates::get_template(template.unwrap_or("expr"))?;
             let (manifest, template_src) = find_embedded_manifest(&template_buf)
                 .unwrap_or((Manifest::Toml(""), &template_buf));
-            (manifest, content.to_string(), template_src.into(), true)
+            (manifest, content, template_src.into(), true)
         }
         Input::Loop(content, count) => {
             let templ = if count { "loop-count" } else { "loop" };
             (
                 Manifest::Toml(""),
-                content.to_string(),
+                content,
                 templates::get_template(templ)?,
                 true,
             )
@@ -85,7 +82,6 @@ pub fn split_input(
 
     let mut prelude_str;
     let mut subs = HashMap::with_capacity(2);
-
     subs.insert(consts::SCRIPT_BODY_SUB, &source[..]);
 
     if sub_prelude {
