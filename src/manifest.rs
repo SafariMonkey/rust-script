@@ -57,7 +57,7 @@ pub fn split_input(
             assert_eq!(prelude_items.len(), 0);
             let content = strip_shebang(content);
             let (manifest, source) =
-                find_embedded_manifest(content).unwrap_or((Manifest::Toml(""), content));
+                find_embedded_manifest(content).unwrap_or((Manifest::Empty, content));
 
             let has_main = source.lines().any(contains_main_method);
             let templ = if has_main { "file" } else { "main" };
@@ -65,14 +65,14 @@ pub fn split_input(
         }
         Input::Expr(content, template) => {
             template_buf = templates::get_template(template.unwrap_or("expr"))?;
-            let (manifest, template_src) = find_embedded_manifest(&template_buf)
-                .unwrap_or((Manifest::Toml(""), &template_buf));
+            let (manifest, template_src) =
+                find_embedded_manifest(&template_buf).unwrap_or((Manifest::Empty, &template_buf));
             (manifest, content, template_src.into(), true)
         }
         Input::Loop(content, count) => {
             let templ = if count { "loop-count" } else { "loop" };
             (
-                Manifest::Toml(""),
+                Manifest::Empty,
                 content,
                 templates::get_template(templ)?,
                 true,
@@ -350,7 +350,10 @@ Represents the kind, and content of, an embedded manifest.
 */
 #[derive(Debug, Eq, PartialEq)]
 enum Manifest<'s> {
+    /// The manifest has no content.
+    Empty,
     /// The manifest is a valid TOML fragment.
+    #[allow(dead_code)]
     Toml(&'s str),
     /// The manifest is a valid TOML fragment (owned).
     // TODO: Change to Cow<'s, str>.
@@ -363,6 +366,7 @@ impl<'s> Manifest<'s> {
     pub fn into_toml(self) -> MainResult<toml::value::Table> {
         use self::Manifest::*;
         match self {
+            Empty => Ok(toml::value::Table::new()),
             Toml(s) => toml::from_str(s),
             TomlOwned(ref s) => toml::from_str(s),
             DepList(s) => Manifest::dep_list_to_toml(s),
