@@ -19,7 +19,7 @@ lazy_static! {
         Regex::new(r"^(?i)\s*//\s*cargo-deps\s*:(.*?)(\r\n|\n)").unwrap();
     static ref RE_MARGIN: Regex = Regex::new(r"^\s*\*( |$)").unwrap();
     static ref RE_SPACE: Regex = Regex::new(r"^([^\S\r\n]+)").unwrap();
-    static ref RE_LINE: Regex = Regex::new(r"(.*)(\r\n|\n)?").unwrap();
+    static ref RE_LINE: Regex = Regex::new(r"(.*?)(\r\n|\n)").unwrap();
     static ref RE_NESTING: Regex = Regex::new(r"/\*|\*/").unwrap();
     static ref RE_COMMENT: Regex = Regex::new(r"^\s*//!").unwrap();
     static ref RE_SHEBANG: Regex = Regex::new(r"^#![^\[].*?(\r\n|\n)").unwrap();
@@ -808,15 +808,12 @@ fn extract_comment(s: &str) -> MainResult<String> {
         Ok(())
     }
 
-    fn iter_lines(s: &str) -> impl Iterator<Item = (&str, Option<&str>)> {
+    fn iter_lines(s: &str) -> impl Iterator<Item = (&str, &str)> {
         let line_re = &*RE_LINE;
         line_re.captures_iter(s).map(move |captures| {
-            let line = captures.get(1).expect("irrefutable match");
-            let terminator = captures.get(2);
-            (
-                &s[line.start()..line.end()],
-                terminator.map(|t| &s[t.start()..t.end()]),
-            )
+            let line = captures.get(1).expect("(.*) is an irrefutable match");
+            let term = captures.get(2).expect("terminator is a required group");
+            (&s[line.start()..line.end()], &s[term.start()..term.end()])
         })
     }
 
@@ -897,11 +894,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
 
             // Done.
             r.push_str(line);
-
-            // Push the terminator if it was found
-            if let Some(terminator) = terminator {
-                r.push_str(terminator);
-            }
+            r.push_str(terminator);
         }
 
         Ok(r)
@@ -944,11 +937,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
 
             // Done.
             r.push_str(content);
-
-            // Push the terminator if it was found
-            if let Some(terminator) = terminator {
-                r.push_str(terminator);
-            }
+            r.push_str(terminator);
         }
 
         Ok(r)
