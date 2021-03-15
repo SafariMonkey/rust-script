@@ -18,7 +18,8 @@ lazy_static! {
     static ref RE_SHORT_MANIFEST: Regex =
         Regex::new(r"^(?i)\s*//\s*cargo-deps\s*:(.*?)(\r\n|\n)").unwrap();
     static ref RE_MARGIN: Regex = Regex::new(r"^\s*\*( |$)").unwrap();
-    static ref RE_SPACE: Regex = Regex::new(r"^(\s+)").unwrap();
+    static ref RE_SPACE: Regex = Regex::new(r"^([^\S\r\n]+)").unwrap();
+    static ref RE_LINE: Regex = Regex::new(r"(.*)(\r\n|\n)?").unwrap();
     static ref RE_NESTING: Regex = Regex::new(r"/\*|\*/").unwrap();
     static ref RE_COMMENT: Regex = Regex::new(r"^\s*//!").unwrap();
     static ref RE_SHEBANG: Regex = Regex::new(r"^#![^\[].*?(\r\n|\n)").unwrap();
@@ -807,6 +808,18 @@ fn extract_comment(s: &str) -> MainResult<String> {
         Ok(())
     }
 
+    fn iter_lines(s: &str) -> impl Iterator<Item = (&str, Option<&str>)> {
+        let line_re = &*RE_LINE;
+        line_re.captures_iter(s).map(move |captures| {
+            let line = captures.get(1).expect("irrefutable match");
+            let terminator = captures.get(2);
+            (
+                &s[line.start()..line.end()],
+                terminator.map(|t| &s[t.start()..t.end()]),
+            )
+        })
+    }
+
     fn extract_block(s: &str) -> MainResult<String> {
         /*
         On every line:
@@ -829,7 +842,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
         let mut margin = None;
         let mut depth: u32 = 1;
 
-        for line in s.lines() {
+        for (line, terminator) in iter_lines(s) {
             if depth == 0 {
                 break;
             }
@@ -877,7 +890,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
 
             Eurgh.
             */
-            n_leading_spaces(line, leading_space.unwrap_or(0))?;
+            n_leading_spaces(&line, leading_space.unwrap_or(0))?;
 
             let strip_len = min(leading_space.unwrap_or(0), line.len());
             let line = &line[strip_len..];
@@ -885,8 +898,10 @@ fn extract_comment(s: &str) -> MainResult<String> {
             // Done.
             r.push_str(line);
 
-            // `lines` removes newlines.  Ideally, it wouldn't do that, but hopefully this shouldn't cause any *real* problems.
-            r.push('\n');
+            // Push the terminator if it was found
+            if let Some(terminator) = terminator {
+                r.push_str(terminator);
+            }
         }
 
         Ok(r)
@@ -900,7 +915,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
 
         let mut leading_space = None;
 
-        for line in s.lines() {
+        for (line, terminator) in iter_lines(s) {
             // Strip leading comment marker.
             let content = match comment_re.find(line) {
                 Some(m) => &line[m.end()..],
@@ -922,7 +937,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
 
             Eurgh.
             */
-            n_leading_spaces(content, leading_space.unwrap_or(0))?;
+            n_leading_spaces(&content, leading_space.unwrap_or(0))?;
 
             let strip_len = min(leading_space.unwrap_or(0), content.len());
             let content = &content[strip_len..];
@@ -930,8 +945,10 @@ fn extract_comment(s: &str) -> MainResult<String> {
             // Done.
             r.push_str(content);
 
-            // `lines` removes newlines.  Ideally, it wouldn't do that, but hopefully this shouldn't cause any *real* problems.
-            r.push('\n');
+            // Push the terminator if it was found
+            if let Some(terminator) = terminator {
+                r.push_str(terminator);
+            }
         }
 
         Ok(r)
