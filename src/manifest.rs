@@ -6,12 +6,13 @@ extern crate regex;
 
 use self::regex::Regex;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 
-use crate::consts;
 use crate::error::{MainError, MainResult};
 use crate::templates;
 use crate::Input;
+use crate::{consts, util::SubsliceOffset};
 use std::ffi::OsString;
 
 lazy_static! {
@@ -355,12 +356,12 @@ enum Manifest<'s> {
     Empty,
     /// The manifest is a valid TOML fragment.
     #[allow(dead_code)]
-    Toml(&'s str),
+    Toml(&'s str, Range<usize>),
     /// The manifest is a valid TOML fragment (owned).
     // TODO: Change to Cow<'s, str>.
-    TomlOwned(String),
+    TomlOwned(String, Range<usize>),
     /// The manifest is a comma-delimited list of dependencies.
-    DepList(&'s str),
+    DepList(&'s str, Range<usize>),
 }
 
 impl<'s> Manifest<'s> {
@@ -368,9 +369,9 @@ impl<'s> Manifest<'s> {
         use self::Manifest::*;
         match self {
             Empty => Ok(toml::value::Table::new()),
-            Toml(s) => toml::from_str(s),
-            TomlOwned(ref s) => toml::from_str(s),
-            DepList(s) => Manifest::dep_list_to_toml(s),
+            Toml(s, _) => toml::from_str(s),
+            TomlOwned(ref s, _) => toml::from_str(s),
+            DepList(s, _) => Manifest::dep_list_to_toml(s),
         }
         .map_err(|e| {
             MainError::Tag(
@@ -469,7 +470,7 @@ fn main() {
 fn main() {}
 "),
         Some((
-            DepList(" time=\"0.1.25\""),
+            DepList(" time=\"0.1.25\"", Range { start: 0, end: 29 }),
             "// cargo-deps: time=\"0.1.25\"
 fn main() {}
 "
@@ -481,7 +482,10 @@ fn main() {}
 fn main() {}
 "),
         Some((
-            DepList(" time=\"0.1.25\", libc=\"0.2.5\""),
+            DepList(
+                " time=\"0.1.25\", libc=\"0.2.5\"",
+                Range { start: 0, end: 43 }
+            ),
             "// cargo-deps: time=\"0.1.25\", libc=\"0.2.5\"
 fn main() {}
 "
@@ -494,7 +498,7 @@ fn main() {}
 fn main() {}
 "),
         Some((
-            DepList(" time=\"0.1.25\"  "),
+            DepList(" time=\"0.1.25\"  ", Range { start: 0, end: 34 }),
             "
   // cargo-deps: time=\"0.1.25\"  \n\
 fn main() {}
@@ -529,9 +533,38 @@ fn main() {}
                 r#"[dependencies]
 time = "0.1.25"
 "#
-                .into()
+                .into(),
+                Range { start: 4, end: 59 }
             ),
             r#"//! ```Cargo
+//! [dependencies]
+//! time = "0.1.25"
+//! ```
+fn main() {}
+"#
+        ))
+    );
+
+    assert_eq!(
+        fem(r#"
+
+//! ```Cargo
+//! [dependencies]
+//! time = "0.1.25"
+//! ```
+fn main() {}
+"#),
+        Some((
+            TomlOwned(
+                r#"[dependencies]
+time = "0.1.25"
+"#
+                .into(),
+                Range { start: 6, end: 61 }
+            ),
+            r#"
+
+//! ```Cargo
 //! [dependencies]
 //! time = "0.1.25"
 //! ```
@@ -564,7 +597,8 @@ fn main() {}
                 r#"[dependencies]
 time = "0.1.25"
 "#
-                .into()
+                .into(),
+                Range { start: 4, end: 47 }
             ),
             r#"/*!
 ```Cargo
@@ -601,7 +635,8 @@ fn main() {}
                 r#"[dependencies]
 time = "0.1.25"
 "#
-                .into()
+                .into(),
+                Range { start: 4, end: 59 }
             ),
             r#"/*!
  * ```Cargo
@@ -625,7 +660,12 @@ fn find_short_comment_manifest(s: &str) -> Option<(Manifest, &str)> {
     let re = &*RE_SHORT_MANIFEST;
     if let Some(cap) = re.captures(s) {
         if let Some(m) = cap.get(1) {
-            return Some((Manifest::DepList(m.as_str()), &s[..]));
+            let full_match = cap.get(0).expect("capture inside this capture was found");
+            let span = Range {
+                start: full_match.start(),
+                end: full_match.end(),
+            };
+            return Some((Manifest::DepList(m.as_str(), span), &s[..]));
         }
     }
     None
@@ -652,7 +692,7 @@ fn find_code_block_manifest(s: &str) -> Option<(Manifest, &str)> {
         None => return None,
     };
 
-    let comment = match extract_comment(&s[start..]) {
+    let comment_substrings = match extract_comment(&s[start..]) {
         Ok(s) => s,
         Err(err) => {
             error!("error slicing comment: {}", err);
@@ -660,31 +700,57 @@ fn find_code_block_manifest(s: &str) -> Option<(Manifest, &str)> {
         }
     };
 
-    scrape_markdown_manifest(&comment)
-        .unwrap_or(None)
-        .map(|m| (Manifest::TomlOwned(m), s))
+    // concatenate the comment spans so the parser can parse them
+    let comment = comment_substrings.concat();
+
+    // parse the spans into a manifest string as well as its span within the comment text
+    let (m, (inner_start, inner_end)) = scrape_markdown_manifest(&comment).unwrap_or(None)?;
+
+    // find the span containing each inner index and convert it to a file-level index
+    let fixup_index = |index| {
+        let mut spans = comment_substrings.iter();
+        let mut left = index;
+        loop {
+            let span = spans.next()?;
+            if span.len() < left {
+                left = left - span.len()
+            } else {
+                let span_offset = s.subslice_offset_stable(span)?;
+                break Some(span_offset + left);
+            }
+        }
+    };
+    let span = Range {
+        start: fixup_index(inner_start).expect("index must be less than sum of len"),
+        end: fixup_index(inner_end).expect("index must be less than sum of len"),
+    };
+
+    Some((Manifest::TomlOwned(m, span), s))
 }
 
 /**
 Extracts the first `Cargo` fenced code block from a chunk of Markdown.
+Also returns the range within content that the code block occupies
 */
-fn scrape_markdown_manifest(content: &str) -> MainResult<Option<String>> {
+fn scrape_markdown_manifest(content: &str) -> MainResult<Option<(String, (usize, usize))>> {
     use self::pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
     // To match librustdoc/html/markdown.rs, opts.
     let exts = Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES;
 
-    let md = Parser::new_ext(content, exts);
+    let md = Parser::new_ext(content, exts).into_offset_iter();
 
     let mut found = false;
     let mut output = None;
+    let (mut start, mut end) = (0, content.len());
 
-    for item in md {
-        match item {
+    for (event, range) in md {
+        match event {
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref info)))
                 if info.to_lowercase() == "cargo" && output.is_none() =>
             {
                 found = true;
+                start = range.start;
             }
             Event::Text(ref text) if found => {
                 let s = output.get_or_insert(String::new());
@@ -692,12 +758,13 @@ fn scrape_markdown_manifest(content: &str) -> MainResult<Option<String>> {
             }
             Event::End(Tag::CodeBlock(_)) if found => {
                 found = false;
+                end = range.end;
             }
             _ => (),
         }
     }
 
-    Ok(output)
+    Ok(output.map(|output| (output, (start, end))))
 }
 
 #[test]
@@ -743,11 +810,12 @@ dependencies = { time = "*" }
 ```
 "#
         ),
-        Ok(Some(
+        Ok(Some((
             r#"dependencies = { time = "*" }
 "#
-            .into()
-        ))
+            .into(),
+            (21, 63)
+        )))
     );
 
     assert_eq!(
@@ -765,11 +833,12 @@ dependencies = { time = "*" }
 ```
 "#
         ),
-        Ok(Some(
+        Ok(Some((
             r#"dependencies = { time = "*" }
 "#
-            .into()
-        ))
+            .into(),
+            (86, 128)
+        )))
     );
 
     assert_eq!(
@@ -787,18 +856,19 @@ dependencies = { explode = true }
 ```
 "#
         ),
-        Ok(Some(
+        Ok(Some((
             r#"dependencies = { time = "*" }
 "#
-            .into()
-        ))
+            .into(),
+            (21, 63)
+        )))
     );
 }
 
 /**
 Extracts the contents of a Rust doc comment.
 */
-fn extract_comment(s: &str) -> MainResult<String> {
+fn extract_comment(s: &str) -> MainResult<Vec<&str>> {
     use std::cmp::min;
 
     fn n_leading_spaces(s: &str, n: usize) -> MainResult<()> {
@@ -808,16 +878,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
         Ok(())
     }
 
-    fn iter_lines(s: &str) -> impl Iterator<Item = (&str, &str)> {
-        let line_re = &*RE_LINE;
-        line_re.captures_iter(s).map(move |captures| {
-            let line = captures.get(1).expect("(.*) is an irrefutable match");
-            let term = captures.get(2).expect("terminator is a required group");
-            (&s[line.start()..line.end()], &s[term.start()..term.end()])
-        })
-    }
-
-    fn extract_block(s: &str) -> MainResult<String> {
+    fn extract_block(s: &str) -> MainResult<Vec<&str>> {
         /*
         On every line:
 
@@ -829,7 +890,7 @@ fn extract_comment(s: &str) -> MainResult<String> {
         - strip leading space
         - append content
         */
-        let mut r = String::new();
+        let mut r = Vec::<&str>::new();
 
         let margin_re = &*RE_MARGIN;
         let space_re = &*RE_SPACE;
@@ -893,15 +954,15 @@ fn extract_comment(s: &str) -> MainResult<String> {
             let line = &line[strip_len..];
 
             // Done.
-            r.push_str(line);
-            r.push_str(terminator);
+            r.push(line);
+            r.push(terminator);
         }
 
         Ok(r)
     }
 
-    fn extract_line(s: &str) -> MainResult<String> {
-        let mut r = String::new();
+    fn extract_line(s: &str) -> MainResult<Vec<&str>> {
+        let mut r = Vec::<&str>::new();
 
         let comment_re = &*RE_COMMENT;
         let space_re = &*RE_SPACE;
@@ -936,8 +997,8 @@ fn extract_comment(s: &str) -> MainResult<String> {
             let content = &content[strip_len..];
 
             // Done.
-            r.push_str(content);
-            r.push_str(terminator);
+            r.push(content);
+            r.push(terminator);
         }
 
         Ok(r)
@@ -952,11 +1013,29 @@ fn extract_comment(s: &str) -> MainResult<String> {
     }
 }
 
+fn iter_lines(s: &str) -> impl Iterator<Item = (&str, &str)> {
+    let line_re = &*RE_LINE;
+    line_re.captures_iter(s).map(move |captures| {
+        let line = captures.get(1).expect("(.*) is an irrefutable match");
+        let term = captures.get(2).expect("terminator is a required group");
+        (&s[line.start()..line.end()], &s[term.start()..term.end()])
+    })
+}
+
 #[test]
 fn test_extract_comment() {
     macro_rules! ec {
         ($s:expr) => {
             extract_comment($s).map_err(|e| e.to_string())
+        };
+    }
+
+    use std::iter::once;
+    macro_rules! lines {
+        ($s:expr) => {
+            iter_lines($s)
+                .flat_map(|(l, term)| once(l).chain(once(term)))
+                .collect::<Vec<&str>>()
         };
     }
 
@@ -973,7 +1052,8 @@ time = "*"
 */
 fn main() {}
 "#),
-        Ok(r#"
+        Ok(lines!(
+            r#"
 Here is a manifest:
 
 ```cargo
@@ -982,7 +1062,7 @@ time = "*"
 ```
 
 "#
-        .into())
+        ))
     );
 
     assert_eq!(
@@ -996,7 +1076,8 @@ time = "*"
  */
 fn main() {}
 "#),
-        Ok(r#"
+        Ok(lines!(
+            r#"
 Here is a manifest:
 
 ```cargo
@@ -1005,7 +1086,7 @@ time = "*"
 ```
 
 "#
-        .into())
+        ))
     );
 
     assert_eq!(
@@ -1017,14 +1098,15 @@ time = "*"
 //! ```
 fn main() {}
 "#),
-        Ok(r#"Here is a manifest:
+        Ok(lines!(
+            r#"Here is a manifest:
 
 ```cargo
 [dependencies]
 time = "*"
 ```
 "#
-        .into())
+        ))
     );
 }
 
