@@ -46,6 +46,7 @@ struct Args {
 
     pkg_path: Option<String>,
     gen_pkg_only: bool,
+    print_pkg_path: bool,
     cargo_output: bool,
     clear_cache: bool,
     debug: bool,
@@ -218,6 +219,11 @@ fn parse_args() -> Args {
                 .requires("script")
                 .conflicts_with_all(&["clear-cache", "force"])
             )
+            .arg(Arg::new("print_pkg_path")
+                .about("Output the location of the generated Cargo package.")
+                .long("print-pkg-path")
+                .requires("gen_pkg_only")
+            )
             .arg(Arg::new("test")
                 .about("Compile and run tests.")
                 .long("test")
@@ -279,6 +285,7 @@ fn parse_args() -> Args {
 
         pkg_path: m.value_of("pkg_path").map(Into::into),
         gen_pkg_only: m.is_present("gen_pkg_only"),
+        print_pkg_path: m.is_present("print_pkg_path"),
         cargo_output: m.is_present("cargo-output"),
         clear_cache: m.is_present("clear-cache"),
         debug: m.is_present("debug"),
@@ -621,6 +628,11 @@ fn gen_pkg_and_compile(input: &Input, action: &InputAction) -> MainResult<()> {
         write_pkg_metadata(pkg_path, &meta)?;
     }
 
+    if action.print_pkg_path {
+        info!("printing package path...");
+        println!("{}", pkg_path.to_string_lossy());
+    }
+
     info!("disarming pkg dir cleanup...");
     cleanup_dir.disarm();
 
@@ -650,6 +662,9 @@ struct InputAction {
 
     /// Directory where the package should live.
     pkg_path: PathBuf,
+
+    /// Print the package path to stdout?
+    print_pkg_path: bool,
 
     /**
     Is the package directory in the cache?
@@ -792,6 +807,7 @@ fn decide_action_for(
         cargo_output: args.cargo_output,
         force_compile: force,
         emit_metadata: true,
+        print_pkg_path: args.print_pkg_path,
         execute: true,
         pkg_path,
         using_cache,
