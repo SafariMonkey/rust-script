@@ -794,7 +794,8 @@ fn decide_action_for(
     info!("pkg_path: {:?}", pkg_path);
     info!("using_cache: {:?}", using_cache);
 
-    let (mani_str, script_str) = manifest::split_input(input, &deps, &prelude, &input_id)?;
+    let (mani_str, mani_span, script_str) =
+        manifest::split_input(input, &deps, &prelude, &input_id)?;
 
     // Forcibly override some flags based on build kind.
     let (debug, force) = match args.build_kind {

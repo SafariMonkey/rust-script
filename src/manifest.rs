@@ -45,7 +45,7 @@ pub fn split_input(
     deps: &[(String, String)],
     prelude_items: &[String],
     input_id: &OsString,
-) -> MainResult<(String, String)> {
+) -> MainResult<(String, Option<Range<usize>>, String)> {
     fn contains_main_method(line: &str) -> bool {
         line.starts_with("fn main()")
             || line.starts_with("pub fn main()")
@@ -81,6 +81,8 @@ pub fn split_input(
             )
         }
     };
+
+    let mani_span = part_mani.span();
 
     let mut prelude_str;
     let mut subs = HashMap::with_capacity(2);
@@ -118,7 +120,7 @@ pub fn split_input(
     let mani_str = format!("{}", toml::Value::Table(mani));
     info!("mani_str: {}", mani_str);
 
-    Ok((mani_str, source))
+    Ok((mani_str, mani_span, source))
 }
 
 #[test]
@@ -135,8 +137,8 @@ fn test_split_input() {
     let f = |c| Input::File("n", &dummy_path, c, 0);
 
     macro_rules! r {
-        ($m:expr, $r:expr) => {
-            Some(($m.into(), $r.into()))
+        ($m:expr, $ms:expr, $r:expr) => {
+            Some(($m.into(), $ms, $r.into()))
         };
     }
 
@@ -155,6 +157,7 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
+            None,
             r#"fn main() {}"#
         )
     );
@@ -178,6 +181,7 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
+            None,
             r#"
 ---
 fn main() {}
@@ -204,6 +208,7 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
+            None,
             r#"[dependencies]
 time="0.1.25"
 ---
@@ -231,6 +236,7 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
+            Some(Range { start: 0, end: 30 }),
             r#"
 // Cargo-Deps: time="0.1.25"
 fn main() {}
@@ -258,6 +264,7 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
+            Some(Range { start: 0, end: 44 }),
             r#"
 // Cargo-Deps: time="0.1.25", libc="0.2.5"
 fn main() {}
@@ -291,6 +298,7 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
+            Some(Range { start: 26, end: 69 }),
             r#"
 /*!
 Here is a manifest:
@@ -379,6 +387,14 @@ impl<'s> Manifest<'s> {
                 Box::new(MainError::Other(Box::new(e))),
             )
         })
+    }
+
+    pub fn span(&self) -> Option<Range<usize>> {
+        use self::Manifest::*;
+        match self {
+            Toml(_, span) | TomlOwned(_, span) | DepList(_, span) => Some(span.clone()),
+            Empty => None,
+        }
     }
 
     fn dep_list_to_toml(s: &str) -> ::std::result::Result<toml::value::Table, toml::de::Error> {
