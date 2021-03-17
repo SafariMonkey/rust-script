@@ -13,3 +13,9 @@ fn test_clear_cache() {
     let out = rust_script!("--clear-cache").unwrap();
     assert!(out.success());
 }
+
+#[test]
+fn test_gen_pkg() {
+    let out = rust_script!("tests/data/script-no-deps.rs", "--gen-pkg-only").unwrap();
+    assert!(out.success());
+}
