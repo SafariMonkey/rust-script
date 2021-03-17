@@ -23,7 +23,9 @@ mod file_assoc;
 #[cfg(not(windows))]
 mod file_assoc {}
 
+use clap::ArgEnum;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
@@ -46,6 +48,7 @@ struct Args {
 
     pkg_path: Option<String>,
     gen_pkg_only: bool,
+    output_format: Option<OutputFormat>,
     cargo_output: bool,
     clear_cache: bool,
     debug: bool,
@@ -85,6 +88,25 @@ impl BuildKind {
             (true, false) => Self::Test,
             (false, true) => Self::Bench,
             _ => panic!("got both test and bench"),
+        }
+    }
+}
+
+#[derive(ArgEnum, Copy, Clone, Debug)]
+enum OutputFormat {
+    Path,
+}
+
+impl OutputFormat {
+    fn format<'a>(&self, pkg_path: &'a Path) -> Cow<'a, str> {
+        match self {
+            Self::Path => pkg_path.to_string_lossy(),
+        }
+    }
+    fn from(arg: Option<&str>) -> Result<Option<OutputFormat>, String> {
+        match arg {
+            None | Some("none") => Ok(None),
+            Some(s) => ArgEnum::from_str(s, false).map(Option::Some),
         }
     }
 }
@@ -218,6 +240,13 @@ fn parse_args() -> Args {
                 .requires("script")
                 .conflicts_with_all(&["clear-cache", "force"])
             )
+            .arg(Arg::new("output_format")
+                .about("Output format of gen-pkg-only. [default: path]")
+                .long("output-format")
+                .default_value_if("gen_pkg_only", None, "path")
+                .possible_values(&["none", "path"])
+                .requires("gen_pkg_only")
+            )
             .arg(Arg::new("test")
                 .about("Compile and run tests.")
                 .long("test")
@@ -279,6 +308,7 @@ fn parse_args() -> Args {
 
         pkg_path: m.value_of("pkg_path").map(Into::into),
         gen_pkg_only: m.is_present("gen_pkg_only"),
+        output_format: OutputFormat::from(m.value_of("output_format")).unwrap(),
         cargo_output: m.is_present("cargo-output"),
         clear_cache: m.is_present("clear-cache"),
         debug: m.is_present("debug"),
@@ -621,6 +651,10 @@ fn gen_pkg_and_compile(input: &Input, action: &InputAction) -> MainResult<()> {
         write_pkg_metadata(pkg_path, &meta)?;
     }
 
+    if let Some(output_format) = action.output_format {
+        println!("{}", output_format.format(&pkg_path));
+    }
+
     info!("disarming pkg dir cleanup...");
     cleanup_dir.disarm();
 
@@ -650,6 +684,9 @@ struct InputAction {
 
     /// Directory where the package should live.
     pkg_path: PathBuf,
+
+    /// what should we print to stdout?
+    output_format: Option<OutputFormat>,
 
     /**
     Is the package directory in the cache?
@@ -792,6 +829,7 @@ fn decide_action_for(
         cargo_output: args.cargo_output,
         force_compile: force,
         emit_metadata: true,
+        output_format: args.output_format,
         execute: true,
         pkg_path,
         using_cache,
