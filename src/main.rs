@@ -102,7 +102,7 @@ enum OutputFormat {
 
 #[derive(Serialize)]
 struct OutputMetadataJson<'a> {
-    pkg_path: Cow<'a, str>,
+    package_path: Cow<'a, str>,
     script_path: Cow<'a, str>,
     manifest_span: Option<Range<usize>>,
 }
@@ -117,7 +117,7 @@ impl OutputFormat {
         Ok(match self {
             Self::Path => pkg_path.to_string_lossy(),
             Self::MetadataJson => serde_json::to_string(&OutputMetadataJson {
-                pkg_path: pkg_path.to_string_lossy().into(),
+                package_path: pkg_path.to_string_lossy().into(),
                 script_path: meta
                     .path
                     .as_ref()

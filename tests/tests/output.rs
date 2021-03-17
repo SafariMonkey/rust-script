@@ -51,7 +51,7 @@ fn test_gen_pkg_output_format_metadata_json() {
     use std::ops::Range;
     #[derive(Deserialize)]
     struct OutputMetadataJson {
-        pkg_path: String,
+        package_path: String,
         script_path: String,
         manifest_span: Option<Range<usize>>,
     }
@@ -65,7 +65,7 @@ fn test_gen_pkg_output_format_metadata_json() {
 
         let output_data: OutputMetadataJson = serde_json::from_str(&stdout).unwrap();
 
-        assert_package_path(Path::new(&output_data.pkg_path));
+        assert_package_path(Path::new(&output_data.package_path));
 
         let script_path = Path::new(&output_data.script_path);
         let current_dir = std::env::current_dir().unwrap();
