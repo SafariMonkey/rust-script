@@ -29,6 +29,7 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -95,13 +96,43 @@ impl BuildKind {
 #[derive(ArgEnum, Copy, Clone, Debug)]
 enum OutputFormat {
     Path,
+    #[clap(name = "metadata_json")]
+    MetadataJson,
+}
+
+#[derive(Serialize)]
+struct OutputMetadataJson<'a> {
+    pkg_path: Cow<'a, str>,
+    script_path: Cow<'a, str>,
+    manifest_span: Option<Range<usize>>,
 }
 
 impl OutputFormat {
-    fn format<'a>(&self, pkg_path: &'a Path) -> Cow<'a, str> {
-        match self {
+    fn format<'a>(
+        &self,
+        meta: &PackageMetadata,
+        pkg_path: &'a Path,
+        manifest_span: Option<Range<usize>>,
+    ) -> MainResult<Cow<'a, str>> {
+        Ok(match self {
             Self::Path => pkg_path.to_string_lossy(),
-        }
+            Self::MetadataJson => serde_json::to_string(&OutputMetadataJson {
+                pkg_path: pkg_path.to_string_lossy().into(),
+                script_path: meta
+                    .path
+                    .as_ref()
+                    .expect("new-metadata path is always populated")
+                    .into(),
+                manifest_span,
+            })
+            .map_err(|e| {
+                MainError::Tag(
+                    "could not serialize stdout metadata".into(),
+                    Box::new(MainError::Other(Box::new(e))),
+                )
+            })?
+            .into(),
+        })
     }
     fn from(arg: Option<&str>) -> Result<Option<OutputFormat>, String> {
         match arg {
@@ -244,7 +275,7 @@ fn parse_args() -> Args {
                 .about("Output format of gen-pkg-only. [default: path]")
                 .long("output-format")
                 .default_value_if("gen_pkg_only", None, "path")
-                .possible_values(&["none", "path"])
+                .possible_values(&["none", "path", "metadata_json"])
                 .requires("gen_pkg_only")
             )
             .arg(Arg::new("test")
@@ -652,7 +683,10 @@ fn gen_pkg_and_compile(input: &Input, action: &InputAction) -> MainResult<()> {
     }
 
     if let Some(output_format) = action.output_format {
-        println!("{}", output_format.format(&pkg_path));
+        println!(
+            "{}",
+            output_format.format(&meta, &pkg_path, action.manifest_span.clone())?
+        );
     }
 
     info!("disarming pkg dir cleanup...");
@@ -705,6 +739,9 @@ struct InputAction {
 
     /// The package manifest contents.
     manifest: String,
+
+    /// The span the package manifest occupies in the input.
+    manifest_span: Option<Range<usize>>,
 
     /// The script source.
     script: String,
@@ -838,6 +875,7 @@ fn decide_action_for(
         metadata: input_meta,
         old_metadata: None,
         manifest: mani_str,
+        manifest_span: mani_span,
         script: script_str,
         build_kind: args.build_kind,
     };
