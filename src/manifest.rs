@@ -21,6 +21,7 @@ lazy_static! {
     static ref RE_MARGIN: Regex = Regex::new(r"^\s*\*( |$)").unwrap();
     static ref RE_SPACE: Regex = Regex::new(r"^([^\S\r\n]+)").unwrap();
     static ref RE_LINE: Regex = Regex::new(r"(.*?)(\r\n|\n)").unwrap();
+    static ref RE_LINE_ALLOW_NO_TERM: Regex = Regex::new(r"(.*)(\r\n|\n)?").unwrap();
     static ref RE_NESTING: Regex = Regex::new(r"/\*|\*/").unwrap();
     static ref RE_COMMENT: Regex = Regex::new(r"^\s*//!").unwrap();
     static ref RE_SHEBANG: Regex = Regex::new(r"^#![^\[].*?(\r\n|\n)").unwrap();
@@ -45,7 +46,7 @@ pub fn split_input(
     deps: &[(String, String)],
     prelude_items: &[String],
     input_id: &OsString,
-) -> MainResult<(String, Option<Range<usize>>, String)> {
+) -> MainResult<(String, Option<CodeSpan>, String)> {
     fn contains_main_method(line: &str) -> bool {
         line.starts_with("fn main()")
             || line.starts_with("pub fn main()")
@@ -236,7 +237,13 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
-            Some(Range { start: 0, end: 30 }),
+            Some(CodeSpan {
+                byte_span: Range { start: 0, end: 30 },
+                lsp_span: lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(2, 0)
+                }
+            }),
             r#"
 // Cargo-Deps: time="0.1.25"
 fn main() {}
@@ -264,7 +271,13 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
-            Some(Range { start: 0, end: 44 }),
+            Some(CodeSpan {
+                byte_span: Range { start: 0, end: 44 },
+                lsp_span: lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(2, 0)
+                }
+            }),
             r#"
 // Cargo-Deps: time="0.1.25", libc="0.2.5"
 fn main() {}
@@ -298,7 +311,13 @@ edition = "2018"
 name = "n"
 version = "0.1.0"
 "#,
-            Some(Range { start: 26, end: 69 }),
+            Some(CodeSpan {
+                byte_span: Range { start: 26, end: 69 },
+                lsp_span: lsp_types::Range {
+                    start: lsp_types::Position::new(4, 0),
+                    end: lsp_types::Position::new(7, 3)
+                }
+            }),
             r#"
 /*!
 Here is a manifest:
@@ -364,12 +383,12 @@ enum Manifest<'s> {
     Empty,
     /// The manifest is a valid TOML fragment.
     #[allow(dead_code)]
-    Toml(&'s str, Range<usize>),
+    Toml(&'s str, CodeSpan),
     /// The manifest is a valid TOML fragment (owned).
     // TODO: Change to Cow<'s, str>.
-    TomlOwned(String, Range<usize>),
+    TomlOwned(String, CodeSpan),
     /// The manifest is a comma-delimited list of dependencies.
-    DepList(&'s str, Range<usize>),
+    DepList(&'s str, CodeSpan),
 }
 
 impl<'s> Manifest<'s> {
@@ -389,7 +408,7 @@ impl<'s> Manifest<'s> {
         })
     }
 
-    pub fn span(&self) -> Option<Range<usize>> {
+    pub fn span(&self) -> Option<CodeSpan> {
         use self::Manifest::*;
         match self {
             Toml(_, span) | TomlOwned(_, span) | DepList(_, span) => Some(span.clone()),
@@ -415,6 +434,42 @@ impl<'s> Manifest<'s> {
         }
 
         toml::from_str(&r)
+    }
+}
+
+#[derive(serde::Serialize, Debug, Eq, PartialEq, Clone)]
+pub struct CodeSpan {
+    byte_span: Range<usize>,
+    lsp_span: lsp_types::Range,
+}
+
+impl CodeSpan {
+    fn new(byte_span: Range<usize>, reference_str: &str) -> CodeSpan {
+        assert!(
+            byte_span.end <= reference_str.len(),
+            "byte_span must be within reference_str"
+        );
+        let byte_to_lsp_pos = |byte_pos| {
+            let line_re = &*RE_LINE_ALLOW_NO_TERM;
+            let (line_no, line_offset) = line_re
+                .captures_iter(reference_str)
+                .map(|c| c.get(1).expect("(.*) is an irrefutable match").start())
+                .enumerate()
+                .filter(|(_, l)| l <= byte_pos)
+                .last()
+                .map(|(i, l)| (i, l))
+                .expect("irrefutable match");
+            let offset_in_line = byte_pos.saturating_sub(line_offset);
+            lsp_types::Position::new(line_no as u32, offset_in_line as u32)
+        };
+        let start = byte_to_lsp_pos(&byte_span.start);
+        let end = byte_to_lsp_pos(&byte_span.end);
+        let lsp_span = lsp_types::Range { start, end };
+
+        CodeSpan {
+            byte_span,
+            lsp_span,
+        }
     }
 }
 
@@ -486,7 +541,16 @@ fn main() {
 fn main() {}
 "),
         Some((
-            DepList(" time=\"0.1.25\"", Range { start: 0, end: 29 }),
+            DepList(
+                " time=\"0.1.25\"",
+                CodeSpan {
+                    byte_span: Range { start: 0, end: 29 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(1, 0)
+                    }
+                }
+            ),
             "// cargo-deps: time=\"0.1.25\"
 fn main() {}
 "
@@ -500,7 +564,13 @@ fn main() {}
         Some((
             DepList(
                 " time=\"0.1.25\", libc=\"0.2.5\"",
-                Range { start: 0, end: 43 }
+                CodeSpan {
+                    byte_span: Range { start: 0, end: 43 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(1, 0)
+                    }
+                }
             ),
             "// cargo-deps: time=\"0.1.25\", libc=\"0.2.5\"
 fn main() {}
@@ -514,7 +584,16 @@ fn main() {}
 fn main() {}
 "),
         Some((
-            DepList(" time=\"0.1.25\"  ", Range { start: 0, end: 34 }),
+            DepList(
+                " time=\"0.1.25\"  ",
+                CodeSpan {
+                    byte_span: Range { start: 0, end: 34 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(2, 0)
+                    }
+                }
+            ),
             "
   // cargo-deps: time=\"0.1.25\"  \n\
 fn main() {}
@@ -550,7 +629,13 @@ fn main() {}
 time = "0.1.25"
 "#
                 .into(),
-                Range { start: 4, end: 59 }
+                CodeSpan {
+                    byte_span: Range { start: 4, end: 59 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(0, 4),
+                        end: lsp_types::Position::new(3, 7)
+                    }
+                }
             ),
             r#"//! ```Cargo
 //! [dependencies]
@@ -576,7 +661,13 @@ fn main() {}
 time = "0.1.25"
 "#
                 .into(),
-                Range { start: 6, end: 61 }
+                CodeSpan {
+                    byte_span: Range { start: 6, end: 61 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(2, 4),
+                        end: lsp_types::Position::new(5, 7)
+                    }
+                }
             ),
             r#"
 
@@ -614,7 +705,13 @@ fn main() {}
 time = "0.1.25"
 "#
                 .into(),
-                Range { start: 4, end: 47 }
+                CodeSpan {
+                    byte_span: Range { start: 4, end: 47 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(4, 3)
+                    }
+                }
             ),
             r#"/*!
 ```Cargo
@@ -652,7 +749,13 @@ fn main() {}
 time = "0.1.25"
 "#
                 .into(),
-                Range { start: 4, end: 59 }
+                CodeSpan {
+                    byte_span: Range { start: 4, end: 59 },
+                    lsp_span: lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(4, 6)
+                    }
+                }
             ),
             r#"/*!
  * ```Cargo
@@ -681,7 +784,10 @@ fn find_short_comment_manifest(s: &str) -> Option<(Manifest, &str)> {
                 start: full_match.start(),
                 end: full_match.end(),
             };
-            return Some((Manifest::DepList(m.as_str(), span), &s[..]));
+            return Some((
+                Manifest::DepList(m.as_str(), CodeSpan::new(span, s)),
+                &s[..],
+            ));
         }
     }
     None
@@ -741,7 +847,7 @@ fn find_code_block_manifest(s: &str) -> Option<(Manifest, &str)> {
         end: fixup_index(inner_end).expect("index must be less than sum of len"),
     };
 
-    Some((Manifest::TomlOwned(m, span), s))
+    Some((Manifest::TomlOwned(m, CodeSpan::new(span, s)), s))
 }
 
 /**

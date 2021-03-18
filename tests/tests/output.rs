@@ -53,14 +53,15 @@ fn test_gen_pkg_output_format_metadata_json() {
     struct OutputMetadataJson {
         package_path: String,
         script_path: String,
-        manifest_span: Option<Range<usize>>,
+        manifest_span: Option<CodeSpan>,
+    }
+    #[derive(Deserialize, Debug, Eq, PartialEq)]
+    pub struct CodeSpan {
+        byte_span: Range<usize>,
+        lsp_span: lsp_types::Range,
     }
 
-    fn assert_metadata_json(
-        stdout: String,
-        script_name: &str,
-        manifest_span: Option<Range<usize>>,
-    ) {
+    fn assert_metadata_json(stdout: String, script_name: &str, manifest_span: Option<CodeSpan>) {
         use std::path::Path;
 
         let output_data: OutputMetadataJson = serde_json::from_str(&stdout).unwrap();
@@ -91,9 +92,15 @@ fn test_gen_pkg_output_format_metadata_json() {
     assert_metadata_json(
         output_block_manifest,
         "script-full-block.rs",
-        Some(Range {
-            start: 91,
-            end: 156,
+        Some(CodeSpan {
+            byte_span: Range {
+                start: 91,
+                end: 156,
+            },
+            lsp_span: lsp_types::Range {
+                start: lsp_types::Position::new(2, 0),
+                end: lsp_types::Position::new(5, 7),
+            },
         }),
     );
 
@@ -101,9 +108,15 @@ fn test_gen_pkg_output_format_metadata_json() {
     assert_metadata_json(
         output_line_manifest,
         "script-full-line.rs",
-        Some(Range {
-            start: 88,
-            end: 137,
+        Some(CodeSpan {
+            byte_span: Range {
+                start: 88,
+                end: 137,
+            },
+            lsp_span: lsp_types::Range {
+                start: lsp_types::Position::new(3, 0),
+                end: lsp_types::Position::new(6, 3),
+            },
         }),
     );
 
@@ -111,6 +124,12 @@ fn test_gen_pkg_output_format_metadata_json() {
     assert_metadata_json(
         output_short,
         "script-short.rs",
-        Some(Range { start: 0, end: 35 }),
+        Some(CodeSpan {
+            byte_span: Range { start: 0, end: 35 },
+            lsp_span: lsp_types::Range {
+                start: lsp_types::Position::new(0, 0),
+                end: lsp_types::Position::new(1, 0),
+            },
+        }),
     );
 }

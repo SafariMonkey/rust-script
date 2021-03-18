@@ -29,11 +29,11 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::{MainError, MainResult};
+use crate::manifest::CodeSpan;
 use crate::util::Defer;
 use sha1::{Digest, Sha1};
 
@@ -104,7 +104,7 @@ enum OutputFormat {
 struct OutputMetadataJson<'a> {
     package_path: Cow<'a, str>,
     script_path: Cow<'a, str>,
-    manifest_span: Option<Range<usize>>,
+    manifest_span: Option<CodeSpan>,
 }
 
 impl OutputFormat {
@@ -112,7 +112,7 @@ impl OutputFormat {
         &self,
         meta: &PackageMetadata,
         pkg_path: &'a Path,
-        manifest_span: Option<Range<usize>>,
+        manifest_span: Option<CodeSpan>,
     ) -> MainResult<Cow<'a, str>> {
         Ok(match self {
             Self::Path => pkg_path.to_string_lossy(),
@@ -741,7 +741,7 @@ struct InputAction {
     manifest: String,
 
     /// The span the package manifest occupies in the input.
-    manifest_span: Option<Range<usize>>,
+    manifest_span: Option<CodeSpan>,
 
     /// The script source.
     script: String,
