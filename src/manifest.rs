@@ -459,7 +459,8 @@ impl CodeSpan {
                 .last()
                 .map(|(i, l)| (i, l))
                 .expect("irrefutable match");
-            let offset_in_line = byte_pos.saturating_sub(line_offset);
+            let byte_pos = (*byte_pos).max(line_offset);
+            let offset_in_line = reference_str[line_offset..byte_pos].chars().count();
             lsp_types::Position::new(line_no as u32, offset_in_line as u32)
         };
         let start = byte_to_lsp_pos(&byte_span.start);
